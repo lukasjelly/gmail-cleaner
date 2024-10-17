@@ -1,0 +1,78 @@
+function countEmailsBySenderWithProgress() {
+  var senderCount = {}; // Object to store sender and count
+  var batchSize = 10; // Number of threads to process in each batch
+  var scriptProperties = PropertiesService.getScriptProperties();
+  var start = Number(scriptProperties.getProperty('startIndex')) || 0; // Retrieve the starting index from properties or start from 0
+  var threads;
+  
+  // Check elapsed time
+  var startTime = new Date().getTime();
+  var maxBatchDuration = 6 * 1000; // 4 minutes in milliseconds
+
+  while (threads = GmailApp.getInboxThreads(start, batchSize), threads.length > 0) {
+    threads.forEach(function (thread) {
+      var messages = thread.getMessages(); // Get all messages in the thread
+      
+      messages.forEach(function (message) {
+        var sender = message.getFrom(); // Get the sender of the message
+        // Normalize the sender address (remove name if present)
+        var emailMatch = sender.match(/<(.+?)>/);
+        var email = emailMatch ? emailMatch[1] : sender;
+
+        senderCount[email] = (senderCount[email] || 0) + 1;
+      });
+    });
+    
+    start += threads.length; // Increment start for the next batch
+
+    // Check if 4 minutes have elapsed
+    var elapsedTime = new Date().getTime() - startTime;
+    if (elapsedTime >= maxBatchDuration) {
+      console.info("Stopping execution after 4 minutes. Scheduling next batch.");
+      scriptProperties.setProperty('startIndex', start);
+      
+      // Create a new trigger to continue processing
+      ScriptApp.newTrigger('countEmailsBySenderWithProgress') // Make sure this matches the function name
+        .timeBased()
+        .after(2000) // Delay for 2 seconds before continuing
+        .create();
+      return; // Exit the function to allow the trigger to run later
+    }
+  }
+
+  // If all threads processed, clear the start index
+  scriptProperties.deleteProperty('startIndex');
+  // Prepare data to write to the sheet
+  writeToSheet(senderCount); // Call the function to write data to the sheet
+}
+
+function writeToSheet(senderCount) {
+  // Prepare data to write to the sheet
+  var sheetName = "Email Sender Count"; // Set the target sheet name
+  var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+
+  // Safeguard: Check if the active spreadsheet is null and create one if necessary
+  if (!spreadsheet) {
+    console.info("No active spreadsheet found, creating a new one.");
+    spreadsheet = SpreadsheetApp.create(sheetName);
+  }
+  
+  var sheet = spreadsheet.getSheetByName(sheetName); // Get the existing sheet by name
+  if (!sheet) {
+    // If the sheet does not exist, create it
+    sheet = spreadsheet.insertSheet(sheetName);
+  } else {
+    // Clear the sheet for fresh output if it already exists
+    sheet.clear();
+  }
+
+  var output = [["Sender", "Email Count"]]; // Prepare header
+  
+  // Prepare output array
+  for (var sender in senderCount) {
+    output.push([sender, senderCount[sender]]);
+  }
+
+  // Append all rows at once to the sheet
+  sheet.getRange(1, 1, output.length, 2).setValues(output);
+}
